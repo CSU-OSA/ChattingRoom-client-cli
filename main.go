@@ -140,11 +140,13 @@ func (c *Client) createChannel(name string, ticket string) {
 		strings.NewReader(data))
 	if err != nil {
 		logger.Error(err)
+		return
 	}
 	defer resp.Body.Close()
 	body, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
 		logger.Error(err)
+		return
 	}
 
 	if gjson.Get(string(body), "success").Bool() {
@@ -174,11 +176,13 @@ func (c *Client) joinChannel(name string, ticket string) {
 		strings.NewReader(data))
 	if err != nil {
 		logger.Error(err)
+		return
 	}
 	defer resp.Body.Close()
 	body, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
 		logger.Error(err)
+		return
 	}
 
 	if gjson.Get(string(body), "success").Bool() {
@@ -203,11 +207,13 @@ func (c *Client) getMsg() {
 			strings.NewReader(fmt.Sprintf("nick=%s&ticket=%s", c.currUser.nick, c.currUser.ticket)))
 		if err != nil {
 			logger.Error(err)
+			continue
 		}
 		body, err := ioutil.ReadAll(resp.Body)
 		resp.Body.Close()
 		if err != nil {
 			logger.Error(err)
+			continue
 		}
 		message := gjson.Get(string(body), "returnObj").Array()
 		for _, msg := range message {
@@ -236,11 +242,13 @@ func (c *Client) sendMsg(name string, ticket string, msg string) {
 			msg)))
 	if err != nil {
 		logger.Error(err)
+		return
 	}
 	defer resp.Body.Close()
 	_, err = ioutil.ReadAll(resp.Body)
 	if err != nil {
 		logger.Error(err)
+		return
 	}
 }
 
