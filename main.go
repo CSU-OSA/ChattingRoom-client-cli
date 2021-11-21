@@ -290,9 +290,9 @@ func main() {
 	go client.renewUser(time.Microsecond * 100)
 	go client.getMsg()
 
-	f, err := os.Open("./.chatroomrc")
+	f, err := os.Open("./.chattingroomrc")
 	if err == nil {
-		logger.Info("Load chatroomrc:")
+		logger.Info("Load chattingroomrc:")
 		reader := bufio.NewReader(f)
 		for {
 			text, err := reader.ReadString('\n')
