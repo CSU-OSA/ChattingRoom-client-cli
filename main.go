@@ -51,17 +51,24 @@ type User struct {
 }
 
 func (c *Client) loginUser(nick string, ticket string) {
+	if c.server == "" {
+		logger.Error("Please set server first!")
+		return
+	}
+
 	resp, err := http.Post(c.server+"/user/login",
 		"application/x-www-form-urlencoded",
 		strings.NewReader(fmt.Sprintf("nick=%s&ticket=%s", nick, ticket)))
 	if err != nil {
-		logger.Warn(err)
+		logger.Error(err)
+		return
 	}
 	defer resp.Body.Close()
 
 	body, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
-		logger.Warn(err)
+		logger.Error(err)
+		return
 	}
 	if gjson.Get(string(body), "success").Bool() {
 		logger.Info(fmt.Sprintf("User %s login success!", nick))
@@ -70,7 +77,7 @@ func (c *Client) loginUser(nick string, ticket string) {
 			c.currUser = c.user[0]
 		}
 	} else {
-		logger.Error(fmt.Sprintf("User %s login fail: %s!",
+		logger.Error(fmt.Sprintf("User %s login fail: %s",
 			nick,
 			gjson.Get(string(body), "msg").String()))
 	}
@@ -86,15 +93,12 @@ func (c *Client) logoutUser(nick string) {
 	}
 	if c.currUser.nick == nick {
 		c.currUser = User{}
-		logger.Warn("Please switch currUser!")
+		logger.Warn("Please switch user manually!")
 	}
 }
 
 func (c *Client) renewUser(internal time.Duration) {
 	for {
-		if c.server == "" {
-			continue
-		}
 		time.Sleep(internal)
 		for _, usr := range c.user {
 			resp, err := http.Post(c.server+"/user/renew",
@@ -102,7 +106,8 @@ func (c *Client) renewUser(internal time.Duration) {
 				strings.NewReader(fmt.Sprintf("nick=%s&ticket=%s", usr.nick, usr.ticket)))
 			resp.Body.Close()
 			if err != nil {
-				logger.Warn(err)
+				logger.Error(err)
+				continue
 			}
 		}
 	}
@@ -112,12 +117,18 @@ func (c *Client) switchUser(nick string) {
 	for _, user := range c.user {
 		if user.nick == nick {
 			c.currUser = user
+			logger.Info(fmt.Sprintf("Current user has switch to %s", nick))
+			break
 		}
 	}
-	logger.Info(fmt.Sprintf("Current user has switch to %s", nick))
 }
 
 func (c *Client) createChannel(name string, ticket string) {
+	if c.server == "" || c.currUser.nick == "" {
+		logger.Error("Please set server and login first!")
+		return
+	}
+
 	data := fmt.Sprintf("usrNick=%s&usrTicket=%s&name=%s",
 		c.currUser.nick,
 		c.currUser.ticket,
@@ -129,18 +140,29 @@ func (c *Client) createChannel(name string, ticket string) {
 		"application/x-www-form-urlencoded",
 		strings.NewReader(data))
 	if err != nil {
-		panic(err)
+		logger.Error(err)
 	}
 	defer resp.Body.Close()
 	body, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
-		logger.Info(err)
+		logger.Error(err)
 	}
-	logger.Info(string(body))
+
+	if gjson.Get(string(body), "success").Bool() {
+		logger.Info(fmt.Sprintf("Create channel %s success!", name))
+	} else {
+		logger.Error(fmt.Sprintf("Create channel %s fail: %s",
+			name,
+			gjson.Get(string(body), "msg").String()))
+	}
 }
 
 func (c *Client) joinChannel(name string, ticket string) {
-	logger.Debug(c.currUser)
+	if c.server == "" || c.currUser.nick == "" {
+		logger.Error("Please set server and login first!")
+		return
+	}
+
 	data := fmt.Sprintf("usrNick=%s&usrTicket=%s&name=%s",
 		c.currUser.nick,
 		c.currUser.ticket,
@@ -159,16 +181,24 @@ func (c *Client) joinChannel(name string, ticket string) {
 	if err != nil {
 		logger.Error(err)
 	}
-	logger.Info(string(body))
+
+	if gjson.Get(string(body), "success").Bool() {
+		logger.Info(fmt.Sprintf("Join channel %s success!", name))
+	} else {
+		logger.Error(fmt.Sprintf("Join channel %s fail: %s",
+			name,
+			gjson.Get(string(body), "msg").String()))
+	}
 }
 
 func (c *Client) getMsg() {
 	for {
-		if c.server == "" {
+		time.Sleep(time.Microsecond * 100)
+
+		if c.server == "" || c.currUser.nick == "" {
 			continue
 		}
 
-		time.Sleep(time.Microsecond * 100)
 		resp, err := http.Post(c.server+"/msg/get",
 			"application/x-www-form-urlencoded",
 			strings.NewReader(fmt.Sprintf("nick=%s&ticket=%s", c.currUser.nick, c.currUser.ticket)))
@@ -182,7 +212,8 @@ func (c *Client) getMsg() {
 		}
 		message := gjson.Get(string(body), "returnObj").Array()
 		for _, msg := range message {
-			logger.Info(fmt.Sprintf("%s | %s | %s",
+			t, _ := time.ParseInLocation("2006-01-02 15:04:05", msg.Map()["recTime"].String(), time.Local)
+			logger.WithTime(t).Info(fmt.Sprintf("%s | %s | %s",
 				msg.Map()["channelName"],
 				msg.Map()["senderNick"],
 				msg.Map()["msg"].Array()[0]))
@@ -191,6 +222,11 @@ func (c *Client) getMsg() {
 }
 
 func (c *Client) sendMsg(name string, ticket string, msg string) {
+	if c.server == "" || c.currUser.nick == "" {
+		logger.Error("Please set server and login first!")
+		return
+	}
+
 	resp, err := http.Post(c.server+"/msg/send",
 		"application/x-www-form-urlencoded",
 		strings.NewReader(fmt.Sprintf("usrNick=%s&usrTicket=%s&name=%s&ticket=%s&msg=%s",
@@ -210,7 +246,7 @@ func (c *Client) sendMsg(name string, ticket string, msg string) {
 }
 
 func main() {
-	logger.SetLevel(logrus.DebugLevel)
+	logger.SetLevel(logrus.InfoLevel)
 	logger.SetFormatter(&LogFormat{})
 	client := Client{}
 	go client.renewUser(time.Microsecond * 100)
