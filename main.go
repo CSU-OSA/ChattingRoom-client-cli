@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"fmt"
+	"io"
 	"io/ioutil"
 	"net/http"
 	"os"
@@ -36,8 +37,6 @@ func (f LogFormat) Format(entry *logrus.Entry) ([]byte, error) {
 	ret := append([]byte(nil), buf.Bytes()...) // copy buffer
 	return ret, nil
 }
-
-var logger = logrus.New()
 
 type Client struct {
 	server   string
@@ -245,41 +244,63 @@ func (c *Client) sendMsg(name string, ticket string, msg string) {
 	}
 }
 
+var logger = logrus.New()
+var client = Client{}
+
+func parseCommand(text string) {
+	params := append(strings.Split(text, " "), "")
+	if text == "" {
+		return
+	} else if strings.HasPrefix(text, "/server") {
+		client.server = params[1]
+		logger.Info(fmt.Sprintf("Server has changed to %s", client.server))
+	} else if strings.HasPrefix(text, "/user") {
+		switch params[1] {
+		case "login":
+			client.loginUser(params[2], params[3])
+		case "logout":
+			client.logoutUser(params[2])
+		case "switch":
+			client.switchUser(params[2])
+		}
+	} else if strings.HasPrefix(text, "/channel") {
+		switch params[1] {
+		case "create":
+			client.createChannel(params[2], params[3])
+		case "join":
+			client.joinChannel(params[2], params[3])
+		}
+	} else {
+		client.sendMsg("PublicChannel", "", text)
+	}
+}
+
 func main() {
 	logger.SetLevel(logrus.InfoLevel)
 	logger.SetFormatter(&LogFormat{})
-	client := Client{}
+
 	go client.renewUser(time.Microsecond * 100)
 	go client.getMsg()
+
+	f, err := os.Open("./.chatroomrc")
+	if err == nil {
+		logger.Info("Load chatroomrc:")
+		reader := bufio.NewReader(f)
+		for {
+			text, err := reader.ReadString('\n')
+			text = strings.TrimSpace(text)
+			parseCommand(text)
+			if err == io.EOF {
+				break
+			}
+		}
+	}
+	f.Close()
 
 	reader := bufio.NewReader(os.Stdin)
 	for {
 		text, _ := reader.ReadString('\n')
 		text = strings.TrimSpace(text)
-		params := append(strings.Split(text, " "), "")
-		if text == "" {
-			continue
-		} else if strings.HasPrefix(text, "/server") {
-			client.server = params[1]
-			logger.Info(fmt.Sprintf("Server has changed to %s", client.server))
-		} else if strings.HasPrefix(text, "/user") {
-			switch params[1] {
-			case "login":
-				client.loginUser(params[2], params[3])
-			case "logout":
-				client.logoutUser(params[2])
-			case "switch":
-				client.switchUser(params[2])
-			}
-		} else if strings.HasPrefix(text, "/channel") {
-			switch params[1] {
-			case "create":
-				client.createChannel(params[2], params[3])
-			case "join":
-				client.joinChannel(params[2], params[3])
-			}
-		} else {
-			client.sendMsg("PublicChannel", "", text)
-		}
+		parseCommand(text)
 	}
 }
