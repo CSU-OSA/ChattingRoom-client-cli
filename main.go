@@ -8,6 +8,7 @@ import (
 	"io/ioutil"
 	"net/http"
 	"os"
+	"os/signal"
 	"strings"
 	"time"
 
@@ -69,7 +70,7 @@ func (c *Client) loginUser(nick string, ticket string) {
 		logger.Error(err)
 		return
 	}
-	if gjson.Get(string(body), "success").Bool() {
+	if gjson.GetBytes(body, "success").Bool() {
 		logger.Info(fmt.Sprintf("User %s login success!", nick))
 		c.user = append(c.user, User{nick, ticket})
 		if c.currUser.nick == "" {
@@ -78,21 +79,47 @@ func (c *Client) loginUser(nick string, ticket string) {
 	} else {
 		logger.Error(fmt.Sprintf("User %s login fail: %s",
 			nick,
-			gjson.Get(string(body), "msg").String()))
+			gjson.GetBytes(body, "msg")))
 	}
 }
 
 func (c *Client) logoutUser(nick string) {
 	for i, user := range c.user {
 		if user.nick == nick {
-			c.user = append(c.user[:i], c.user[i+1:]...)
-			logger.Info(fmt.Sprintf("User %s Has logout!", nick))
+			resp, err := http.Post(c.server+"/user/logout",
+				"application/x-www-form-urlencoded",
+				strings.NewReader(fmt.Sprintf("nick=%s&ticket=%s", user.nick, user.ticket)))
+			if err != nil {
+				logger.Error(err)
+				return
+			}
+			defer resp.Body.Close()
+
+			body, err := ioutil.ReadAll(resp.Body)
+			if err != nil {
+				logger.Error(err)
+				return
+			}
+			if gjson.GetBytes(body, "success").Bool() {
+				logger.Info(fmt.Sprintf("User %s Has logout!", nick))
+				c.user = append(c.user[:i], c.user[i+1:]...)
+				if c.currUser.nick == nick {
+					c.currUser = User{}
+					logger.Warn("Please switch user manually!")
+				}
+			} else {
+				logger.Error(fmt.Sprintf("User %s login fail: %s",
+					nick,
+					gjson.GetBytes(body, "msg")))
+			}
 			break
 		}
 	}
-	if c.currUser.nick == nick {
-		c.currUser = User{}
-		logger.Warn("Please switch user manually!")
+}
+
+func (C *Client) logoutAllUser() {
+	for _, user := range client.user {
+		client.logoutUser(user.nick)
 	}
 }
 
@@ -149,12 +176,12 @@ func (c *Client) createChannel(name string, ticket string) {
 		return
 	}
 
-	if gjson.Get(string(body), "success").Bool() {
+	if gjson.GetBytes(body, "success").Bool() {
 		logger.Info(fmt.Sprintf("Create channel %s success!", name))
 	} else {
 		logger.Error(fmt.Sprintf("Create channel %s fail: %s",
 			name,
-			gjson.Get(string(body), "msg").String()))
+			gjson.GetBytes(body, "msg")))
 	}
 }
 
@@ -185,12 +212,35 @@ func (c *Client) joinChannel(name string, ticket string) {
 		return
 	}
 
-	if gjson.Get(string(body), "success").Bool() {
+	if gjson.GetBytes(body, "success").Bool() {
 		logger.Info(fmt.Sprintf("Join channel %s success!", name))
 	} else {
 		logger.Error(fmt.Sprintf("Join channel %s fail: %s",
 			name,
-			gjson.Get(string(body), "msg").String()))
+			gjson.GetBytes(body, "msg")))
+	}
+}
+
+func (c *Client) getChannelList() {
+	if c.server == "" {
+		logger.Error("Please set server first!")
+		return
+	}
+
+	resp, err := http.Get(c.server + "/channel/list")
+	if err != nil {
+		logger.Error(err)
+		return
+	}
+	defer resp.Body.Close()
+	body, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		logger.Error(err)
+		return
+	}
+
+	for _, channel := range gjson.GetBytes(body, "@this").Array() {
+		logger.Info(fmt.Sprintf("Channel: %s", channel))
 	}
 }
 
@@ -215,7 +265,7 @@ func (c *Client) getMsg() {
 			logger.Error(err)
 			continue
 		}
-		message := gjson.Get(string(body), "returnObj").Array()
+		message := gjson.GetBytes(body, "returnObj").Array()
 		for _, msg := range message {
 			t, _ := time.ParseInLocation("2006-01-02 15:04:05", msg.Map()["recTime"].String(), time.Local)
 			logger.WithTime(t).Info(fmt.Sprintf("%s | %s | %s",
@@ -277,6 +327,8 @@ func parseCommand(text string) {
 			client.createChannel(params[2], params[3])
 		case "join":
 			client.joinChannel(params[2], params[3])
+		case "list":
+			client.getChannelList()
 		}
 	} else {
 		client.sendMsg("PublicChannel", "", text)
@@ -284,7 +336,15 @@ func parseCommand(text string) {
 }
 
 func main() {
-	logger.SetLevel(logrus.InfoLevel)
+	signal_channel := make(chan os.Signal, 1)
+	signal.Notify(signal_channel, os.Interrupt)
+	go func() {
+		<-signal_channel
+		client.logoutAllUser()
+		os.Exit(1)
+	}()
+
+	logger.SetLevel(logrus.DebugLevel)
 	logger.SetFormatter(&LogFormat{})
 
 	go client.renewUser(time.Microsecond * 100)
@@ -309,6 +369,10 @@ func main() {
 	for {
 		text, _ := reader.ReadString('\n')
 		text = strings.TrimSpace(text)
+		if strings.HasPrefix(text, "/exit") {
+			client.logoutAllUser()
+			break
+		}
 		parseCommand(text)
 	}
 }
