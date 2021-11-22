@@ -16,6 +16,9 @@ CSU-OSA 聊天室（命令行客户端）
 - `/channel`
   - `create name ticket`
   - `join name ticket`
+  - `quit name`
+  - `list`
+- `exit`
 
 ### .chattingroomrc
 
