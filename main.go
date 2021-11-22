@@ -221,6 +221,39 @@ func (c *Client) joinChannel(name string, ticket string) {
 	}
 }
 
+func (c *Client) quitChannel(name string) {
+	if c.server == "" || c.currUser.nick == "" {
+		logger.Error("Please set server and login first!")
+		return
+	}
+
+	data := fmt.Sprintf("usrNick=%s&usrTicket=%s&name=%s",
+		c.currUser.nick,
+		c.currUser.ticket,
+		name)
+	resp, err := http.Post(c.server+"/channel/quit",
+		"application/x-www-form-urlencoded",
+		strings.NewReader(data))
+	if err != nil {
+		logger.Error(err)
+		return
+	}
+	defer resp.Body.Close()
+	body, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		logger.Error(err)
+		return
+	}
+
+	if gjson.GetBytes(body, "success").Bool() {
+		logger.Info(fmt.Sprintf("Quit channel %s success!", name))
+	} else {
+		logger.Error(fmt.Sprintf("Quit channel %s fail: %s",
+			name,
+			gjson.GetBytes(body, "msg")))
+	}
+}
+
 func (c *Client) getChannelList() {
 	if c.server == "" {
 		logger.Error("Please set server first!")
@@ -276,7 +309,7 @@ func (c *Client) getMsg() {
 	}
 }
 
-func (c *Client) sendMsg(name string, ticket string, msg string) {
+func (c *Client) sendMsg(name string, msg string) {
 	if c.server == "" || c.currUser.nick == "" {
 		logger.Error("Please set server and login first!")
 		return
@@ -284,11 +317,10 @@ func (c *Client) sendMsg(name string, ticket string, msg string) {
 
 	resp, err := http.Post(c.server+"/msg/send",
 		"application/x-www-form-urlencoded",
-		strings.NewReader(fmt.Sprintf("usrNick=%s&usrTicket=%s&name=%s&ticket=%s&msg=%s",
+		strings.NewReader(fmt.Sprintf("usrNick=%s&usrTicket=%s&name=%s&msg=%s",
 			c.currUser.nick,
 			c.currUser.ticket,
 			name,
-			ticket,
 			msg)))
 	if err != nil {
 		logger.Error(err)
@@ -327,11 +359,13 @@ func parseCommand(text string) {
 			client.createChannel(params[2], params[3])
 		case "join":
 			client.joinChannel(params[2], params[3])
+		case "quit":
+			client.quitChannel(params[2])
 		case "list":
 			client.getChannelList()
 		}
 	} else {
-		client.sendMsg("PublicChannel", "", text)
+		client.sendMsg("PublicChannel", text)
 	}
 }
 
