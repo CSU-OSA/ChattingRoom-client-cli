@@ -1,4 +1,4 @@
-module chattingroom-cli
+module chattingroom
 
 go 1.17
 
