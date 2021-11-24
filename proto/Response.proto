@@ -1,0 +1,26 @@
+syntax = "proto3";
+option optimize_for = SPEED;
+option go_package = "proto/";
+
+message Response
+{
+  enum Type {
+    RESULT = 0;
+    MESSAGE = 1;
+  }
+
+  Type type = 1;
+  repeated ResponseMessage message = 2;
+  optional Result result = 3;
+}
+
+message Result {
+  bool result = 1;
+  string reason = 2;
+}
+
+message ResponseMessage {
+  string channel = 1;
+  string fromNick = 2;
+  string content = 3;
+}

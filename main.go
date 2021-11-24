@@ -3,17 +3,17 @@ package main
 import (
 	"bufio"
 	"bytes"
+	pojo "chattingroom-cli/proto"
 	"fmt"
 	"io"
-	"io/ioutil"
-	"net/http"
+	"net"
 	"os"
 	"os/signal"
 	"strings"
 	"time"
 
 	"github.com/sirupsen/logrus"
-	"github.com/tidwall/gjson"
+	"google.golang.org/protobuf/proto"
 )
 
 // 格式化 log
@@ -39,337 +39,217 @@ func (f LogFormat) Format(entry *logrus.Entry) ([]byte, error) {
 	return ret, nil
 }
 
-type Client struct {
-	server   string
-	user     []User
-	currUser User
-}
-
 type User struct {
-	nick   string
-	ticket string
+	name string
+	conn net.Conn
 }
 
-func (c *Client) loginUser(nick string, ticket string) {
-	if c.server == "" {
-		logger.Error("Please set server first!")
-		return
+func (u *User) logout() {
+	data := &pojo.Command{
+		Operation: pojo.Command_LOGOUT,
 	}
-
-	resp, err := http.Post(c.server+"/user/login",
-		"application/x-www-form-urlencoded",
-		strings.NewReader(fmt.Sprintf("nick=%s&ticket=%s", nick, ticket)))
+	newData, _ := proto.Marshal(data)
+	_, err := u.conn.Write(newData)
 	if err != nil {
 		logger.Error(err)
-		return
-	}
-	defer resp.Body.Close()
-
-	body, err := ioutil.ReadAll(resp.Body)
-	if err != nil {
-		logger.Error(err)
-		return
-	}
-	if gjson.GetBytes(body, "success").Bool() {
-		logger.Info(fmt.Sprintf("User %s login success!", nick))
-		c.user = append(c.user, User{nick, ticket})
-		if c.currUser.nick == "" {
-			c.currUser = c.user[0]
-		}
-	} else {
-		logger.Error(fmt.Sprintf("User %s login fail: %s",
-			nick,
-			gjson.GetBytes(body, "msg")))
 	}
 }
 
-func (c *Client) logoutUser(nick string) {
-	for i, user := range c.user {
-		if user.nick == nick {
-			resp, err := http.Post(c.server+"/user/logout",
-				"application/x-www-form-urlencoded",
-				strings.NewReader(fmt.Sprintf("nick=%s&ticket=%s", user.nick, user.ticket)))
-			if err != nil {
-				logger.Error(err)
-				return
-			}
-			defer resp.Body.Close()
-
-			body, err := ioutil.ReadAll(resp.Body)
-			if err != nil {
-				logger.Error(err)
-				return
-			}
-			if gjson.GetBytes(body, "success").Bool() {
-				logger.Info(fmt.Sprintf("User %s Has logout!", nick))
-				c.user = append(c.user[:i], c.user[i+1:]...)
-				if c.currUser.nick == nick {
-					c.currUser = User{}
-					logger.Warn("Please switch user manually!")
-				}
-			} else {
-				logger.Error(fmt.Sprintf("User %s login fail: %s",
-					nick,
-					gjson.GetBytes(body, "msg")))
-			}
-			break
-		}
+func (u *User) joinChannel(channel string, nick string) {
+	data := &pojo.Command{
+		Operation: pojo.Command_JOIN_CHANNEL,
+		Channel: &pojo.Channel{
+			Channel: channel,
+			Nick:    &nick,
+		},
+	}
+	newData, _ := proto.Marshal(data)
+	_, err := u.conn.Write(newData)
+	if err != nil {
+		logger.Error(err)
 	}
 }
 
-func (C *Client) logoutAllUser() {
-	for _, user := range client.user {
-		client.logoutUser(user.nick)
+func (u *User) quitChannel(channel string) {
+	data := &pojo.Command{
+		Operation: pojo.Command_QUIT_CHANNEL,
+		Channel: &pojo.Channel{
+			Channel: channel,
+		},
+	}
+	newData, _ := proto.Marshal(data)
+	_, err := u.conn.Write(newData)
+	if err != nil {
+		logger.Error(err)
 	}
 }
 
-func (c *Client) renewUser(internal time.Duration) {
-	for {
-		time.Sleep(internal)
-		for _, usr := range c.user {
-			resp, err := http.Post(c.server+"/user/renew",
-				"application/x-www-form-urlencoded",
-				strings.NewReader(fmt.Sprintf("nick=%s&ticket=%s", usr.nick, usr.ticket)))
-			resp.Body.Close()
-			if err != nil {
-				logger.Error(err)
-				continue
-			}
-		}
+func (u *User) send(channel string, message string) {
+	data := &pojo.Command{
+		Operation: pojo.Command_SEND,
+		Message: &pojo.CommandMessage{
+			Channel: channel,
+			Content: message,
+		},
+	}
+	newData, _ := proto.Marshal(data)
+	_, err := u.conn.Write(newData)
+	if err != nil {
+		logger.Error(err)
 	}
 }
 
-func (c *Client) switchUser(nick string) {
-	for _, user := range c.user {
-		if user.nick == nick {
-			c.currUser = user
-			logger.Info(fmt.Sprintf("Current user has switch to %s", nick))
-			break
-		}
-	}
-}
-
-func (c *Client) createChannel(name string, ticket string) {
-	if c.server == "" || c.currUser.nick == "" {
-		logger.Error("Please set server and login first!")
-		return
-	}
-
-	data := fmt.Sprintf("usrNick=%s&usrTicket=%s&name=%s",
-		c.currUser.nick,
-		c.currUser.ticket,
-		name)
-	if ticket != "" {
-		data += fmt.Sprintf("&ticket=%s", ticket)
-	}
-	resp, err := http.Post(c.server+"/channel/create",
-		"application/x-www-form-urlencoded",
-		strings.NewReader(data))
-	if err != nil {
-		logger.Error(err)
-		return
-	}
-	defer resp.Body.Close()
-	body, err := ioutil.ReadAll(resp.Body)
-	if err != nil {
-		logger.Error(err)
-		return
-	}
-
-	if gjson.GetBytes(body, "success").Bool() {
-		logger.Info(fmt.Sprintf("Create channel %s success!", name))
-	} else {
-		logger.Error(fmt.Sprintf("Create channel %s fail: %s",
-			name,
-			gjson.GetBytes(body, "msg")))
-	}
-}
-
-func (c *Client) joinChannel(name string, ticket string) {
-	if c.server == "" || c.currUser.nick == "" {
-		logger.Error("Please set server and login first!")
-		return
-	}
-
-	data := fmt.Sprintf("usrNick=%s&usrTicket=%s&name=%s",
-		c.currUser.nick,
-		c.currUser.ticket,
-		name)
-	if ticket != "" {
-		data += fmt.Sprintf("&ticket=%s", ticket)
-	}
-	resp, err := http.Post(c.server+"/channel/join",
-		"application/x-www-form-urlencoded",
-		strings.NewReader(data))
-	if err != nil {
-		logger.Error(err)
-		return
-	}
-	defer resp.Body.Close()
-	body, err := ioutil.ReadAll(resp.Body)
-	if err != nil {
-		logger.Error(err)
-		return
-	}
-
-	if gjson.GetBytes(body, "success").Bool() {
-		logger.Info(fmt.Sprintf("Join channel %s success!", name))
-	} else {
-		logger.Error(fmt.Sprintf("Join channel %s fail: %s",
-			name,
-			gjson.GetBytes(body, "msg")))
-	}
-}
-
-func (c *Client) quitChannel(name string) {
-	if c.server == "" || c.currUser.nick == "" {
-		logger.Error("Please set server and login first!")
-		return
-	}
-
-	data := fmt.Sprintf("usrNick=%s&usrTicket=%s&name=%s",
-		c.currUser.nick,
-		c.currUser.ticket,
-		name)
-	resp, err := http.Post(c.server+"/channel/quit",
-		"application/x-www-form-urlencoded",
-		strings.NewReader(data))
-	if err != nil {
-		logger.Error(err)
-		return
-	}
-	defer resp.Body.Close()
-	body, err := ioutil.ReadAll(resp.Body)
-	if err != nil {
-		logger.Error(err)
-		return
-	}
-
-	if gjson.GetBytes(body, "success").Bool() {
-		logger.Info(fmt.Sprintf("Quit channel %s success!", name))
-	} else {
-		logger.Error(fmt.Sprintf("Quit channel %s fail: %s",
-			name,
-			gjson.GetBytes(body, "msg")))
-	}
-}
-
-func (c *Client) getChannelList() {
-	if c.server == "" {
-		logger.Error("Please set server first!")
-		return
-	}
-
-	resp, err := http.Get(c.server + "/channel/list")
-	if err != nil {
-		logger.Error(err)
-		return
-	}
-	defer resp.Body.Close()
-	body, err := ioutil.ReadAll(resp.Body)
-	if err != nil {
-		logger.Error(err)
-		return
-	}
-
-	for _, channel := range gjson.GetBytes(body, "@this").Array() {
-		logger.Info(fmt.Sprintf("Channel: %s", channel))
-	}
-}
-
-func (c *Client) getMsg() {
+func (u *User) receive() {
 	for {
 		time.Sleep(time.Microsecond * 100)
 
-		if c.server == "" || c.currUser.nick == "" {
-			continue
+		data := &pojo.Command{
+			Operation: pojo.Command_RECEIVE,
 		}
-
-		resp, err := http.Post(c.server+"/msg/get",
-			"application/x-www-form-urlencoded",
-			strings.NewReader(fmt.Sprintf("nick=%s&ticket=%s", c.currUser.nick, c.currUser.ticket)))
+		newData, _ := proto.Marshal(data)
+		_, err := u.conn.Write(newData)
 		if err != nil {
 			logger.Error(err)
-			continue
-		}
-		body, err := ioutil.ReadAll(resp.Body)
-		resp.Body.Close()
-		if err != nil {
-			logger.Error(err)
-			continue
-		}
-		message := gjson.GetBytes(body, "returnObj").Array()
-		for _, msg := range message {
-			t, _ := time.ParseInLocation("2006-01-02 15:04:05", msg.Map()["recTime"].String(), time.Local)
-			logger.WithTime(t).Info(fmt.Sprintf("%s | %s | %s",
-				msg.Map()["channelName"],
-				msg.Map()["senderNick"],
-				msg.Map()["msg"].Array()[0]))
 		}
 	}
 }
 
-func (c *Client) sendMsg(name string, msg string) {
-	if c.server == "" || c.currUser.nick == "" {
-		logger.Error("Please set server and login first!")
+func (u *User) heartbeat() {
+	for {
+		time.Sleep(time.Second * 1)
+		data := &pojo.Command{
+			Operation: pojo.Command_HEARTBEAT,
+		}
+		newData, _ := proto.Marshal(data)
+		_, err := u.conn.Write(newData)
+		if err != nil {
+			logger.Error(err)
+		}
+	}
+}
+
+type Client struct {
+	server   string
+	user     []*User
+	currUser *User
+}
+
+func (c *Client) loginUser(name string) {
+	if c.server == "" {
+		logger.Error("Please set server first!")
 		return
 	}
 
-	resp, err := http.Post(c.server+"/msg/send",
-		"application/x-www-form-urlencoded",
-		strings.NewReader(fmt.Sprintf("usrNick=%s&usrTicket=%s&name=%s&msg=%s",
-			c.currUser.nick,
-			c.currUser.ticket,
-			name,
-			msg)))
+	conn, err := net.Dial("tcp", c.server)
 	if err != nil {
 		logger.Error(err)
 		return
 	}
-	defer resp.Body.Close()
-	_, err = ioutil.ReadAll(resp.Body)
-	if err != nil {
-		logger.Error(err)
-		return
+	user := User{name, conn}
+	go user.heartbeat()
+	go user.receive()
+
+	c.user = append(c.user, &user)
+
+	if c.currUser == nil {
+		c.currUser = &user
+	}
+}
+
+func (c *Client) logoutUser(name string) {
+	for i, user := range c.user {
+		if user.name == name {
+			user.logout()
+			c.user = append(c.user[:i], c.user[i+1:]...)
+			break
+		}
+	}
+	if c.currUser.name == name {
+		c.currUser = nil
+		logger.Warn("Please switch user manually!")
+	}
+}
+
+func (c *Client) logoutAllUser() {
+	for _, user := range c.user {
+		user.logout()
+	}
+	c.user = []*User{}
+	c.currUser = nil
+}
+
+func (c *Client) switchUser(name string) {
+	for _, user := range c.user {
+		if user.name == name {
+			c.currUser = user
+			logger.Info(fmt.Sprintf("Current user has switch to %s", name))
+			break
+		}
+	}
+}
+
+func (c *Client) getMessage() {
+	for {
+		if c.currUser == nil {
+			continue
+		}
+		var buf [4096]byte
+		n, err := c.currUser.conn.Read(buf[:])
+		if err != nil {
+			logger.Error(err)
+		}
+
+		resp := &pojo.Response{}
+		err = proto.Unmarshal(buf[:n], resp)
+		if err != nil {
+			logger.Error(err)
+		}
+		if resp.GetType() == pojo.Response_MESSAGE {
+			for _, message := range resp.GetMessage() {
+				logger.Info(message.GetChannel() +
+					"｜" +
+					message.GetFromNick() +
+					"｜" +
+					message.GetContent())
+			}
+		}
 	}
 }
 
 var logger = logrus.New()
-var client = Client{}
-
-func parseCommand(text string) {
-	params := append(strings.Split(text, " "), "")
-	if text == "" {
-		return
-	} else if strings.HasPrefix(text, "/server") {
-		client.server = params[1]
-		logger.Info(fmt.Sprintf("Server has changed to %s", client.server))
-	} else if strings.HasPrefix(text, "/user") {
-		switch params[1] {
-		case "login":
-			client.loginUser(params[2], params[3])
-		case "logout":
-			client.logoutUser(params[2])
-		case "switch":
-			client.switchUser(params[2])
-		}
-	} else if strings.HasPrefix(text, "/channel") {
-		switch params[1] {
-		case "create":
-			client.createChannel(params[2], params[3])
-		case "join":
-			client.joinChannel(params[2], params[3])
-		case "quit":
-			client.quitChannel(params[2])
-		case "list":
-			client.getChannelList()
-		}
-	} else {
-		client.sendMsg("PublicChannel", text)
-	}
-}
 
 func main() {
+	var client = Client{}
+	go client.getMessage()
+
+	parseCommand := func(text string) {
+		params := append(strings.Split(text, " "), "")
+		if text == "" {
+			return
+		} else if strings.HasPrefix(text, "/server") {
+			client.server = params[1]
+			logger.Info(fmt.Sprintf("Server has changed to %s", client.server))
+		} else if strings.HasPrefix(text, "/user") {
+			switch params[1] {
+			case "login":
+				client.loginUser(params[2])
+			case "logout":
+				client.logoutUser(params[2])
+			case "switch":
+				client.switchUser(params[2])
+			}
+		} else if strings.HasPrefix(text, "/channel") {
+			switch params[1] {
+			case "join":
+				client.currUser.joinChannel(params[2], params[3])
+			case "quit":
+				client.currUser.quitChannel(params[2])
+			}
+		} else {
+			client.currUser.send("PublicChannel", text)
+		}
+	}
+
 	signal_channel := make(chan os.Signal, 1)
 	signal.Notify(signal_channel, os.Interrupt)
 	go func() {
@@ -380,9 +260,6 @@ func main() {
 
 	logger.SetLevel(logrus.DebugLevel)
 	logger.SetFormatter(&LogFormat{})
-
-	go client.renewUser(time.Microsecond * 100)
-	go client.getMsg()
 
 	f, err := os.Open("./.chattingroomrc")
 	if err == nil {
