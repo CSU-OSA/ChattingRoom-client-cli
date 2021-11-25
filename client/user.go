@@ -11,134 +11,146 @@ import (
 type User struct {
 	nick   string
 	ticket string
-	server string
+	server []*Server
 }
 
-func (u *User) createChannel(name string, ticket string) (string, error) {
-	if u.server == "" {
-		return "Please bind server first!", nil
+func (u *User) createChannel(name string, ticket string) ([]string, error) {
+	if len(u.server) == 0 {
+		return []string{"Please bind server first!"}, nil
 	}
 
-	data := map[string]string{
-		"usrNick":   u.nick,
-		"usrTicket": u.ticket,
-		"name":      name,
-	}
-	if ticket != "" {
-		data["ticket"] = ticket
-	}
+	rslt := make([]string, 0)
+	for _, server := range u.server {
+		data := map[string]string{
+			"usrNick":   u.nick,
+			"usrTicket": u.ticket,
+			"name":      name,
+		}
+		if ticket != "" {
+			data["ticket"] = ticket
+		}
 
-	resp, err := requests.Post(u.server+"/channel/create", data)
-	if err != nil {
-		return "", err
-	}
+		resp, err := requests.Post(server.url+"/channel/create", data)
+		if err != nil {
+			return nil, err
+		}
 
-	if gjson.Get(resp, "success").Bool() {
-		return fmt.Sprintf("Create channel %s success!", name), nil
-	} else {
-		return fmt.Sprintf("Create channel %s fail: %s",
-			name,
-			gjson.Get(resp, "msg")), nil
+		if gjson.Get(resp, "success").Bool() {
+			rslt = append(rslt, fmt.Sprintf("Create channel %s success!", name))
+		} else {
+			rslt = append(rslt, fmt.Sprintf("Create channel %s fail: %s",
+				name,
+				gjson.Get(resp, "msg")))
+		}
 	}
+	return rslt, nil
 }
 
-func (u *User) joinChannel(name string, ticket string) (string, error) {
-	if u.server == "" {
-		return "Please bind server first!", nil
+func (u *User) joinChannel(name string, ticket string) ([]string, error) {
+	if len(u.server) == 0 {
+		return []string{"Please bind server first!"}, nil
 	}
+	rslt := make([]string, 0)
+	for _, server := range u.server {
+		data := map[string]string{
+			"usrNick":   u.nick,
+			"usrTicket": u.ticket,
+			"name":      name,
+		}
+		if ticket != "" {
+			data["ticket"] = ticket
+		}
 
-	data := map[string]string{
-		"usrNick":   u.nick,
-		"usrTicket": u.ticket,
-		"name":      name,
-	}
-	if ticket != "" {
-		data["ticket"] = ticket
-	}
+		resp, err := requests.Post(server.url+"/channel/join", data)
+		if err != nil {
+			return nil, err
+		}
 
-	resp, err := requests.Post(u.server+"/channel/join", data)
-	if err != nil {
-		return "", err
+		if gjson.Get(resp, "success").Bool() {
+			rslt = append(rslt, fmt.Sprintf("Join channel %s success!", name))
+		} else {
+			rslt = append(rslt, fmt.Sprintf("Join channel %s fail: %s",
+				name,
+				gjson.Get(resp, "msg")))
+		}
 	}
-
-	if gjson.Get(resp, "success").Bool() {
-		return fmt.Sprintf("Join channel %s success!", name), nil
-	} else {
-		return fmt.Sprintf("Join channel %s fail: %s",
-			name,
-			gjson.Get(resp, "msg")), nil
-	}
+	return rslt, nil
 }
 
-func (u *User) quitChannel(name string) (string, error) {
-	if u.server == "" {
-		return "Please bind server first!", nil
+func (u *User) quitChannel(name string) ([]string, error) {
+	if len(u.server) == 0 {
+		return []string{"Please bind server first!"}, nil
 	}
+	rslt := make([]string, 0)
+	for _, server := range u.server {
+		data := map[string]string{
+			"usrNick":   u.nick,
+			"usrTicket": u.ticket,
+			"name":      name,
+		}
 
-	data := map[string]string{
-		"usrNick":   u.nick,
-		"usrTicket": u.ticket,
-		"name":      name,
-	}
+		resp, err := requests.Post(server.url+"/channel/quit", data)
+		if err != nil {
+			return nil, err
+		}
 
-	resp, err := requests.Post(u.server+"/channel/quit", data)
-	if err != nil {
-		return "", err
+		if gjson.Get(resp, "success").Bool() {
+			rslt = append(rslt, fmt.Sprintf("Join channel %s success!", name))
+		} else {
+			rslt = append(rslt, fmt.Sprintf("Join channel %s fail: %s",
+				name,
+				gjson.Get(resp, "msg")))
+		}
 	}
-
-	if gjson.Get(resp, "success").Bool() {
-		return fmt.Sprintf("Join channel %s success!", name), nil
-	} else {
-		return fmt.Sprintf("Join channel %s fail: %s",
-			name,
-			gjson.Get(resp, "msg")), nil
-	}
+	return rslt, nil
 }
 
 func (u *User) getMsg() ([]string, error) {
-	if u.server == "" {
-		return []string{}, nil
+	if len(u.server) == 0 {
+		return []string{"Please bind server first!"}, nil
 	}
+	rslt := make([]string, 0)
+	for _, server := range u.server {
+		data := map[string]string{
+			"nick":   u.nick,
+			"ticket": u.ticket,
+		}
 
-	data := map[string]string{
-		"nick":   u.nick,
-		"ticket": u.ticket,
-	}
+		resp, err := requests.Post(server.url+"/msg/get", data)
+		if err != nil {
+			return []string{}, err
+		}
 
-	resp, err := requests.Post(u.server+"/msg/get", data)
-	if err != nil {
-		return []string{}, err
+		message := gjson.Get(resp, "returnObj").Array()
+		for _, msg := range message {
+			rslt = append(rslt, fmt.Sprintf("%s | %s | %s",
+				msg.Map()["channelName"],
+				msg.Map()["senderNick"],
+				msg.Map()["msg"].Array()[0]))
+		}
 	}
-
-	message := gjson.Get(resp, "returnObj").Array()
-	result := []string{}
-	for _, msg := range message {
-		result = append(result, fmt.Sprintf("%s | %s | %s",
-			msg.Map()["channelName"],
-			msg.Map()["senderNick"],
-			msg.Map()["msg"].Array()[0]))
-	}
-	return result, nil
+	return rslt, nil
 }
 
-func (u *User) sendMsg(name string, msg string) (string, error) {
-	if u.server == "" {
-		return "Please bind server first!", nil
+func (u *User) sendMsg(name string, msg string) ([]string, error) {
+	if len(u.server) == 0 {
+		return []string{"Please bind server first!"}, nil
 	}
 
-	data := map[string]string{
-		"usrNick":   u.nick,
-		"usrTicket": u.ticket,
-		"name":      name,
-		"msg":       msg,
-	}
+	rslt := make([]string, 0)
+	for _, server := range u.server {
 
-	_, err := requests.Post(u.server+"/msg/send", data)
-	if err != nil {
-		return "", err
+		data := map[string]string{
+			"usrNick":   u.nick,
+			"usrTicket": u.ticket,
+			"name":      name,
+			"msg":       msg,
+		}
+
+		_, err := requests.Post(server.url+"/msg/send", data)
+		if err != nil {
+			return nil, err
+		}
 	}
-	if err != nil {
-		return "", err
-	}
-	return "", nil
+	return rslt, nil
 }
