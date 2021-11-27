@@ -14,6 +14,8 @@ builds:
       - darwin
     flags:
       - -trimpath
+    ldflags:
+      - -s -w
   - id: win
     binary: chattingroom
     env:
@@ -23,6 +25,8 @@ builds:
       - windows
     flags:
       - -trimpath
+    ldflags:
+      - -s -w
 archives:
   - id: win
     builds:
