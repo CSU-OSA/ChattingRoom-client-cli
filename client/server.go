@@ -13,28 +13,19 @@ type Server struct {
 	url  string
 }
 
-func (s *Server) getChannelList() ([]string, error) {
+func (s *Server) getChannelList() []*map[string]string {
+	rslt := []*map[string]string{}
+
 	resp, err := requests.Get(s.url+"/channel/list", nil)
 	if err != nil {
-		return nil, err
+		rslt = append(rslt, &map[string]string{"level": "Error", "message": err.Error()})
 	}
 
-	rslt := []string{}
 	for _, channel := range gjson.Get(resp, "@this").Array() {
-		rslt = append(rslt, (fmt.Sprintf("Channel: %s", channel)))
-	}
-	return rslt, nil
-}
-
-func (s *Server) getUserList() ([]string, error) {
-	resp, err := requests.Get(s.url+"/user/list", nil)
-	if err != nil {
-		return nil, err
+		rslt = append(rslt, &map[string]string{
+			"level":   "Info",
+			"message": fmt.Sprintf("Channel: %s", channel)})
 	}
 
-	rslt := []string{}
-	for _, channel := range gjson.Get(resp, "@this").Array() {
-		rslt = append(rslt, (fmt.Sprintf("User: %s", channel)))
-	}
-	return rslt, nil
+	return rslt
 }
