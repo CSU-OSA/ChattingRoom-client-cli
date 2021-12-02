@@ -45,8 +45,8 @@ type User struct {
 }
 
 func (u *User) logout() {
-	data := &pojo.Command{
-		Operation: pojo.Command_LOGOUT,
+	data := &pojo.RequestPOJO{
+		Operation: pojo.RequestPOJO_LOGOUT,
 	}
 	newData, _ := proto.Marshal(data)
 	_, err := u.conn.Write(newData)
@@ -55,11 +55,12 @@ func (u *User) logout() {
 	}
 }
 
-func (u *User) joinChannel(channel string, nick string) {
-	data := &pojo.Command{
-		Operation: pojo.Command_JOIN_CHANNEL,
+func (u *User) joinChannel(channel, nick, ticket string) {
+	data := &pojo.RequestPOJO{
+		Operation: pojo.RequestPOJO_JOIN_CHA,
 		Channel: &pojo.Channel{
 			Channel: channel,
+			Ticket:  &ticket,
 			Nick:    &nick,
 		},
 	}
@@ -71,8 +72,8 @@ func (u *User) joinChannel(channel string, nick string) {
 }
 
 func (u *User) quitChannel(channel string) {
-	data := &pojo.Command{
-		Operation: pojo.Command_QUIT_CHANNEL,
+	data := &pojo.RequestPOJO{
+		Operation: pojo.RequestPOJO_QUIT_CHA,
 		Channel: &pojo.Channel{
 			Channel: channel,
 		},
@@ -84,12 +85,12 @@ func (u *User) quitChannel(channel string) {
 	}
 }
 
-func (u *User) send(channel string, message string) {
-	data := &pojo.Command{
-		Operation: pojo.Command_SEND,
-		Message: &pojo.CommandMessage{
+func (u *User) sendMsg(channel, content string) {
+	data := &pojo.RequestPOJO{
+		Operation: pojo.RequestPOJO_SENDMSG,
+		Message: &pojo.RequestMessage{
 			Channel: channel,
-			Content: message,
+			Content: content,
 		},
 	}
 	newData, _ := proto.Marshal(data)
@@ -99,12 +100,12 @@ func (u *User) send(channel string, message string) {
 	}
 }
 
-func (u *User) receive() {
+func (u *User) getMsg() {
 	for {
 		time.Sleep(time.Microsecond * 100)
 
-		data := &pojo.Command{
-			Operation: pojo.Command_RECEIVE,
+		data := &pojo.RequestPOJO{
+			Operation: pojo.RequestPOJO_GETMSG,
 		}
 		newData, _ := proto.Marshal(data)
 		_, err := u.conn.Write(newData)
@@ -117,8 +118,8 @@ func (u *User) receive() {
 func (u *User) heartbeat() {
 	for {
 		time.Sleep(time.Second * 1)
-		data := &pojo.Command{
-			Operation: pojo.Command_HEARTBEAT,
+		data := &pojo.RequestPOJO{
+			Operation: pojo.RequestPOJO_HEARTBEAT,
 		}
 		newData, _ := proto.Marshal(data)
 		_, err := u.conn.Write(newData)
@@ -147,7 +148,7 @@ func (c *Client) loginUser(name string) {
 	}
 	user := User{name, conn}
 	go user.heartbeat()
-	go user.receive()
+	go user.getMsg()
 
 	c.user = append(c.user, &user)
 
@@ -197,14 +198,16 @@ func (c *Client) getMessage() {
 		n, err := c.currUser.conn.Read(buf[:])
 		if err != nil {
 			logger.Error(err)
+			continue
 		}
 
-		resp := &pojo.Response{}
+		resp := &pojo.ResponsePOJO{}
 		err = proto.Unmarshal(buf[:n], resp)
 		if err != nil {
 			logger.Error(err)
+			continue
 		}
-		if resp.GetType() == pojo.Response_MESSAGE {
+		if resp.GetType() == pojo.ResponsePOJO_MESSAGE {
 			for _, message := range resp.GetMessage() {
 				logger.Info(message.GetChannel() +
 					"｜" +
@@ -241,12 +244,12 @@ func main() {
 		} else if strings.HasPrefix(text, "/channel") {
 			switch params[1] {
 			case "join":
-				client.currUser.joinChannel(params[2], params[3])
+				client.currUser.joinChannel(params[2], params[3], params[4])
 			case "quit":
 				client.currUser.quitChannel(params[2])
 			}
 		} else {
-			client.currUser.send("PublicChannel", text)
+			client.currUser.sendMsg("PublicChannel", text)
 		}
 	}
 
